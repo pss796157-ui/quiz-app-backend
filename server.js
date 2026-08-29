@@ -88,12 +88,21 @@ const upload = multer({ storage });
 
 // Login
 app.post('/auth/login', async (req, res) => {
+    console.log('Login Attempt:', req.body.email);
     try {
         const { email, password } = req.body;
         const user = await User.findOne({ email, password });
-        if (user) res.json(user);
-        else res.status(401).json({ message: "Invalid credentials" });
-    } catch (e) { res.status(500).send(e.message); }
+        if (user) {
+            console.log('Login Success:', email);
+            res.json(user);
+        } else {
+            console.log('Login Failed: Invalid credentials for', email);
+            res.status(401).json({ message: "Invalid credentials" });
+        }
+    } catch (e) {
+        console.error('Login Error:', e.message);
+        res.status(500).json({ error: e.message });
+    }
 });
 
 // Signup
@@ -235,3 +244,4 @@ app.post('/proctoring/upload', upload.single('video'), (req, res) => {
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT}`);
 });
+

@@ -3,26 +3,38 @@ const express = require('express');
 const mongoose = require('mongoose');
 const bodyParser = require('body-parser');
 const cors = require('cors');
+const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(bodyParser.json());
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 mongoose.connect(process.env.MONGODB_URI)
     .then(() => console.log('Connected to MongoDB Atlas'))
-    .catch(err => console.error('DB Error:', err));
+    .catch(err => console.error('MongoDB Error:', err));
 
 const User = mongoose.model('User', new mongoose.Schema({ id: String, email: { type: String, unique: true }, password: { type: String, required: true }, name: String, role: String }));
 const Group = mongoose.model('Group', new mongoose.Schema({ id: String, name: String, teacherId: String, subjectCode: String, passKey: String, timeLimit: Number }));
 const Question = mongoose.model('Question', new mongoose.Schema({ id: String, text: String, optionA: String, optionB: String, optionC: String, optionD: String, correctOption: String, groupId: String }));
 const Attempt = mongoose.model('Attempt', new mongoose.Schema({ id: String, studentId: String, studentName: String, teacherId: String, groupId: String, subjectName: String, score: Number, totalQuestions: Number, videoPath: String, timestamp: { type: Number, default: Date.now } }));
 
-app.get('/', (req, res) => res.send('<h1>Quiz Backend Live</h1>'));
+// Factory Reset
+app.get('/dev/factory-reset', async (req, res) => {
+    await User.deleteMany({});
+    await Group.deleteMany({});
+    await Question.deleteMany({});
+    await Attempt.deleteMany({});
+    res.json({ message: "Success: Database reset completed." });
+});
 
-// Updated Login: Now allows login from any device
+// API Routes
+app.get('/', (req, res) => res.send('<h1>Quiz App Cloud Server Active</h1>'));
+
 app.post('/auth/login', async (req, res) => {
     const { email, password } = req.body;
     const user = await User.findOne({ email, password });
@@ -39,24 +51,11 @@ app.post('/auth/signup', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.delete('/auth/account', async (req, res) => {
-    const { uid } = req.query;
-    await User.findOneAndDelete({ id: uid });
-    await Group.deleteMany({ teacherId: uid });
-    await Attempt.deleteMany({ teacherId: uid });
-    res.status(204).send();
-});
-
 app.get('/groups', async (req, res) => res.json(await Group.find({ teacherId: req.query.teacherId })));
 app.post('/groups', async (req, res) => {
     const data = req.body;
     if (!data.id) data.id = uuidv4();
     res.json(await Group.findOneAndUpdate({ id: data.id }, data, { upsert: true, new: true }));
-});
-app.delete('/groups/:id', async (req, res) => {
-    await Group.findOneAndDelete({ id: req.params.id });
-    await Question.deleteMany({ groupId: req.params.id });
-    res.status(204).send();
 });
 
 app.get('/groups/search', async (req, res) => {
@@ -85,6 +84,24 @@ app.post('/attempts', async (req, res) => {
     if (!data.id) data.id = uuidv4();
     await new Attempt(data).save();
     res.json({ message: "Saved" });
+});
+
+// Proctoring Video Upload
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        const dir = './uploads';
+        if (!require('fs').existsSync(dir)) require('fs').mkdirSync(dir);
+        cb(null, dir);
+    },
+    filename: (req, file, cb) => cb(null, `proctoring_${Date.now()}.mp4`)
+});
+const upload = multer({ storage });
+
+app.post('/proctoring/upload', upload.single('video'), (req, res) => {
+    const host = req.get('host');
+    const protocol = host.includes('onrender.com') ? 'https' : 'http';
+    const url = `${protocol}://${host}/uploads/${req.file.filename}`;
+    res.json({ url });
 });
 
 app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));

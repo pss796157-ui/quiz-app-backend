@@ -16,39 +16,66 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 mongoose.connect(process.env.MONGODB_URI)
     .then(() => console.log('Connected to MongoDB Atlas'))
-    .catch(err => console.error('MongoDB Error:', err));
+    .catch(err => console.error('DB Error:', err));
 
+// Models
 const User = mongoose.model('User', new mongoose.Schema({ id: String, email: { type: String, unique: true }, password: { type: String, required: true }, name: String, role: String }));
 const Group = mongoose.model('Group', new mongoose.Schema({ id: String, name: String, teacherId: String, subjectCode: String, passKey: String, timeLimit: Number }));
 const Question = mongoose.model('Question', new mongoose.Schema({ id: String, text: String, optionA: String, optionB: String, optionC: String, optionD: String, correctOption: String, groupId: String }));
 const Attempt = mongoose.model('Attempt', new mongoose.Schema({ id: String, studentId: String, studentName: String, teacherId: String, groupId: String, subjectName: String, score: Number, totalQuestions: Number, videoPath: String, timestamp: { type: Number, default: Date.now } }));
 
-// Factory Reset
-app.get('/dev/factory-reset', async (req, res) => {
-    await User.deleteMany({});
-    await Group.deleteMany({});
-    await Question.deleteMany({});
-    await Attempt.deleteMany({});
-    res.json({ message: "Success: Database reset completed." });
+// API Routes
+app.get('/', (req, res) => res.send('<h1>Quiz Backend Live</h1>'));
+
+// 🗑️ DELETE ACCOUNT
+app.delete('/auth/account', async (req, res) => {
+    try {
+        const { uid } = req.query;
+        await User.findOneAndDelete({ id: uid });
+        await Group.deleteMany({ teacherId: uid });
+        await Attempt.deleteMany({ teacherId: uid });
+        res.status(204).send();
+    } catch (e) { res.status(500).send(e.message); }
 });
 
-// API Routes
-app.get('/', (req, res) => res.send('<h1>Quiz App Cloud Server Active</h1>'));
+// 🗑️ DELETE GROUP (PASSKEY)
+app.delete('/groups/:id', async (req, res) => {
+    try {
+        await Group.findOneAndDelete({ id: req.params.id });
+        await Question.deleteMany({ groupId: req.params.id });
+        res.status(204).send();
+    } catch (e) { res.status(500).send(e.message); }
+});
 
+// 🗑️ DELETE QUESTION
+app.delete('/questions/:id', async (req, res) => {
+    try {
+        await Question.findOneAndDelete({ id: req.params.id });
+        res.status(204).send();
+    } catch (e) { res.status(500).send(e.message); }
+});
+
+// 🗑️ DELETE ATTEMPT (RESULT)
+app.delete('/attempts/:id', async (req, res) => {
+    try {
+        await Attempt.findOneAndDelete({ id: req.params.id });
+        res.status(204).send();
+    } catch (e) { res.status(500).send(e.message); }
+});
+
+// OTHER ROUTES
 app.post('/auth/login', async (req, res) => {
     const { email, password } = req.body;
     const user = await User.findOne({ email, password });
-    user ? res.json(user) : res.status(401).json({ message: "Invalid credentials" });
+    user ? res.json(user) : res.status(401).send();
 });
 
 app.post('/auth/signup', async (req, res) => {
-    try {
-        const data = req.body;
-        if (!data.id) data.id = uuidv4();
-        const user = new User(data);
-        await user.save();
-        res.json(user);
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    const data = req.body;
+    if (!data.id) data.id = uuidv4();
+    const user = new User(data);
+    await user.save();
+    res.json(user);
 });
 
 app.get('/groups', async (req, res) => res.json(await Group.find({ teacherId: req.query.teacherId })));
@@ -67,26 +94,26 @@ app.get('/groups/search', async (req, res) => {
 app.get('/questions', async (req, res) => res.json(await Question.find({ groupId: req.query.groupId })));
 app.post('/questions', async (req, res) => {
     const data = req.body;
-    if (!data.id) data.id = uuidv4();
+    data.id = uuidv4();
     res.json(await new Question(data).save());
 });
 
 app.get('/attempts', async (req, res) => {
     const { teacherId, studentId } = req.query;
-    let q = {};
-    if (teacherId) q.teacherId = teacherId;
-    if (studentId) q.studentId = studentId;
-    res.json(await Attempt.find(q).sort({ timestamp: -1 }));
+    let query = {};
+    if (teacherId) query.teacherId = teacherId;
+    if (studentId) query.studentId = studentId;
+    res.json(await Attempt.find(query).sort({ timestamp: -1 }));
 });
 
 app.post('/attempts', async (req, res) => {
     const data = req.body;
-    if (!data.id) data.id = uuidv4();
+    data.id = uuidv4();
     await new Attempt(data).save();
     res.json({ message: "Saved" });
 });
 
-// Proctoring Video Upload
+// Video Upload Setup
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
         const dir = './uploads';
@@ -100,8 +127,7 @@ const upload = multer({ storage });
 app.post('/proctoring/upload', upload.single('video'), (req, res) => {
     const host = req.get('host');
     const protocol = host.includes('onrender.com') ? 'https' : 'http';
-    const url = `${protocol}://${host}/uploads/${req.file.filename}`;
-    res.json({ url });
+    res.json({ url: `${protocol}://${host}/uploads/${req.file.filename}` });
 });
 
 app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));

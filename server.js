@@ -87,6 +87,18 @@ const upload = multer({ storage });
 
 // --- API Endpoints ---
 
+// DANGER: Factory Reset (Clears all data from MongoDB)
+app.get('/dev/factory-reset', async (req, res) => {
+    try {
+        await User.deleteMany({});
+        await Group.deleteMany({});
+        await Question.deleteMany({});
+        await Attempt.deleteMany({});
+        console.log('FACTORY RESET: All data deleted from MongoDB');
+        res.json({ message: "Success: All database records have been deleted." });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Login
 app.post('/auth/login', async (req, res) => {
     console.log('Login Attempt:', req.body.email);
@@ -252,4 +264,5 @@ app.post('/proctoring/upload', upload.single('video'), (req, res) => {
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT}`);
 });
+
 

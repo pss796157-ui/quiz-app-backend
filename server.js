@@ -6,6 +6,7 @@ const cors = require('cors');
 const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -68,9 +69,34 @@ const attemptSchema = new mongoose.Schema({
     score: Number,
     totalQuestions: Number,
     videoPath: String,
+    voicePath: String,
     timestamp: { type: Number, default: Date.now }
 });
 const Attempt = mongoose.model('Attempt', attemptSchema);
+
+// Helper function to delete proctoring files from disk
+const deleteProctoringFiles = (attempt) => {
+    try {
+        if (attempt.videoPath) {
+            const videoFilename = attempt.videoPath.split('/').pop();
+            const videoFullPath = path.join(__dirname, 'uploads', videoFilename);
+            if (fs.existsSync(videoFullPath)) {
+                fs.unlinkSync(videoFullPath);
+                console.log(`Deleted video: ${videoFilename}`);
+            }
+        }
+        if (attempt.voicePath) {
+            const voiceFilename = attempt.voicePath.split('/').pop();
+            const voiceFullPath = path.join(__dirname, 'uploads', voiceFilename);
+            if (fs.existsSync(voiceFullPath)) {
+                fs.unlinkSync(voiceFullPath);
+                console.log(`Deleted voice recording: ${voiceFilename}`);
+            }
+        }
+    } catch (err) {
+        console.error('Error deleting proctoring files:', err.message);
+    }
+};
 
 // Video Upload Setup
 const storage = multer.diskStorage({
@@ -179,6 +205,11 @@ app.delete('/groups/:id', async (req, res) => {
             await Group.deleteOne(filter);
             // Also delete questions associated with this group
             await Question.deleteMany({ groupId: groupId });
+
+            // Delete proctoring files for all attempts in this group
+            const attempts = await Attempt.find({ groupId: groupId });
+            attempts.forEach(attempt => deleteProctoringFiles(attempt));
+
             // Also delete attempts associated with this group
             await Attempt.deleteMany({ groupId: groupId });
         }
@@ -265,7 +296,11 @@ app.delete('/attempts/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const filter = mongoose.Types.ObjectId.isValid(id) ? { _id: id } : { id: id };
-        await Attempt.findOneAndDelete(filter);
+        const attempt = await Attempt.findOne(filter);
+        if (attempt) {
+            deleteProctoringFiles(attempt);
+            await Attempt.deleteOne(filter);
+        }
         res.status(204).send();
     } catch (e) { res.status(500).send(e.message); }
 });
@@ -273,6 +308,8 @@ app.delete('/attempts/:id', async (req, res) => {
 // Explicit route for student portal to delete their marks (attempts)
 app.delete('/attempts/student/:studentId', async (req, res) => {
     try {
+        const attempts = await Attempt.find({ studentId: req.params.studentId });
+        attempts.forEach(attempt => deleteProctoringFiles(attempt));
         await Attempt.deleteMany({ studentId: req.params.studentId });
         res.status(204).send();
     } catch (e) { res.status(500).send(e.message); }
@@ -289,6 +326,9 @@ app.delete('/auth/account', async (req, res) => {
         if (user) {
             const userId = user.id;
             const role = user.role;
+
+            const attempts = await Attempt.find(role === 'TEACHER' ? { teacherId: userId } : { studentId: userId });
+            attempts.forEach(attempt => deleteProctoringFiles(attempt));
 
             if (role === 'TEACHER') {
                 // Cascading delete for teacher
@@ -319,6 +359,9 @@ app.delete('/auth/account/:uid', async (req, res) => {
         if (user) {
             const userId = user.id;
             const role = user.role;
+
+            const attempts = await Attempt.find(role === 'TEACHER' ? { teacherId: userId } : { studentId: userId });
+            attempts.forEach(attempt => deleteProctoringFiles(attempt));
 
             if (role === 'TEACHER') {
                 const groups = await Group.find({ teacherId: userId });
@@ -352,6 +395,5 @@ app.post('/proctoring/upload', upload.single('video'), (req, res) => {
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT}`);
 });
-
 
 

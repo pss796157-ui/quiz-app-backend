@@ -169,9 +169,19 @@ app.post('/groups', async (req, res) => {
 
 app.delete('/groups/:id', async (req, res) => {
     try {
-        await Group.findOneAndDelete({ id: req.params.id });
-        // Also delete questions associated with this group
-        await Question.deleteMany({ groupId: req.params.id });
+        const { id } = req.params;
+        // Handle both UUID 'id' and MongoDB '_id'
+        const filter = mongoose.Types.ObjectId.isValid(id) ? { _id: id } : { id: id };
+        const group = await Group.findOne(filter);
+
+        if (group) {
+            const groupId = group.id;
+            await Group.deleteOne(filter);
+            // Also delete questions associated with this group
+            await Question.deleteMany({ groupId: groupId });
+            // Also delete attempts associated with this group
+            await Attempt.deleteMany({ groupId: groupId });
+        }
         res.status(204).send();
     } catch (e) { res.status(500).send(e.message); }
 });
@@ -185,6 +195,16 @@ app.get('/groups/search', async (req, res) => {
         });
         if (group) res.json(group);
         else res.status(404).json({ message: "Not found" });
+    } catch (e) { res.status(500).send(e.message); }
+});
+
+// Explicit route to clear passKey for a group
+app.delete('/groups/:id/passkey', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const filter = mongoose.Types.ObjectId.isValid(id) ? { _id: id } : { id: id };
+        await Group.findOneAndUpdate(filter, { passKey: "" });
+        res.status(200).json({ message: "PassKey cleared" });
     } catch (e) { res.status(500).send(e.message); }
 });
 
@@ -206,7 +226,9 @@ app.post('/questions', async (req, res) => {
 
 app.delete('/questions/:id', async (req, res) => {
     try {
-        await Question.findOneAndDelete({ id: req.params.id });
+        const { id } = req.params;
+        const filter = mongoose.Types.ObjectId.isValid(id) ? { _id: id } : { id: id };
+        await Question.findOneAndDelete(filter);
         res.status(204).send();
     } catch (e) { res.status(500).send(e.message); }
 });
@@ -241,7 +263,9 @@ app.get('/attempts/student/:studentId', async (req, res) => {
 
 app.delete('/attempts/:id', async (req, res) => {
     try {
-        await Attempt.findOneAndDelete({ id: req.params.id });
+        const { id } = req.params;
+        const filter = mongoose.Types.ObjectId.isValid(id) ? { _id: id } : { id: id };
+        await Attempt.findOneAndDelete(filter);
         res.status(204).send();
     } catch (e) { res.status(500).send(e.message); }
 });
@@ -256,9 +280,57 @@ app.delete('/attempts/student/:studentId', async (req, res) => {
 
 app.delete('/auth/account', async (req, res) => {
     try {
-        const { uid } = req.query;
-        await User.findOneAndDelete({ id: uid });
-        // Optional: Delete user's groups, attempts etc.
+        const uid = req.query.uid || req.body.uid;
+        if (!uid) return res.status(400).json({ message: "User ID required" });
+
+        const filter = mongoose.Types.ObjectId.isValid(uid) ? { _id: uid } : { id: uid };
+        const user = await User.findOne(filter);
+
+        if (user) {
+            const userId = user.id;
+            const role = user.role;
+
+            if (role === 'TEACHER') {
+                // Cascading delete for teacher
+                const groups = await Group.find({ teacherId: userId });
+                const groupIds = groups.map(g => g.id);
+
+                await Question.deleteMany({ groupId: { $in: groupIds } });
+                await Attempt.deleteMany({ teacherId: userId });
+                await Group.deleteMany({ teacherId: userId });
+            } else {
+                // Cascading delete for student
+                await Attempt.deleteMany({ studentId: userId });
+            }
+
+            await User.deleteOne(filter);
+        }
+        res.status(204).send();
+    } catch (e) { res.status(500).send(e.message); }
+});
+
+// Added route parameter version for account deletion
+app.delete('/auth/account/:uid', async (req, res) => {
+    try {
+        const { uid } = req.params;
+        const filter = mongoose.Types.ObjectId.isValid(uid) ? { _id: uid } : { id: uid };
+        const user = await User.findOne(filter);
+
+        if (user) {
+            const userId = user.id;
+            const role = user.role;
+
+            if (role === 'TEACHER') {
+                const groups = await Group.find({ teacherId: userId });
+                const groupIds = groups.map(g => g.id);
+                await Question.deleteMany({ groupId: { $in: groupIds } });
+                await Attempt.deleteMany({ teacherId: userId });
+                await Group.deleteMany({ teacherId: userId });
+            } else {
+                await Attempt.deleteMany({ studentId: userId });
+            }
+            await User.deleteOne(filter);
+        }
         res.status(204).send();
     } catch (e) { res.status(500).send(e.message); }
 });
@@ -280,5 +352,6 @@ app.post('/proctoring/upload', upload.single('video'), (req, res) => {
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT}`);
 });
+
 
 

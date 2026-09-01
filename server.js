@@ -3,16 +3,19 @@ const express = require('express');
 const mongoose = require('mongoose');
 const bodyParser = require('body-parser');
 const cors = require('cors');
+const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(bodyParser.json());
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 mongoose.connect(process.env.MONGODB_URI)
-    .then(() => console.log('Database Connected'))
+    .then(() => console.log('MongoDB Connected'))
     .catch(err => console.error('DB Error:', err));
 
 // Models
@@ -59,7 +62,7 @@ app.delete('/attempts/:id', async (req, res) => {
     } catch (e) { res.status(500).send(e.message); }
 });
 
-// OTHER API ROUTES
+// OTHER ROUTES
 app.get('/', (req, res) => res.send('Quiz App Backend is Live!'));
 app.post('/auth/login', async (req, res) => {
     const { email, password } = req.body;
@@ -102,6 +105,23 @@ app.post('/attempts', async (req, res) => {
     if (!data.id) data.id = uuidv4();
     await new Attempt(data).save();
     res.json({ message: "Saved" });
+});
+
+// Proctoring Upload Setup
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        const dir = './uploads';
+        if (!require('fs').existsSync(dir)) require('fs').mkdirSync(dir);
+        cb(null, dir);
+    },
+    filename: (req, file, cb) => cb(null, `proctoring_${Date.now()}.mp4`)
+});
+const upload = multer({ storage });
+
+app.post('/proctoring/upload', upload.single('video'), (req, res) => {
+    const host = req.get('host');
+    const protocol = host.includes('onrender.com') ? 'https' : 'http';
+    res.json({ url: `${protocol}://${host}/uploads/${req.file.filename}` });
 });
 
 app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
